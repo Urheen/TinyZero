@@ -1,3 +1,12 @@
+export N_GPUS=4
+export BASE_MODEL="/oss/public/user/wangziyan/models--Qwen--Qwen2.5-3B/snapshots/3aab1f1954e9cc14eb9509a215f9e5ca08227a9b"
+export DATA_DIR="/oss/public/user/wangziyan/ziyan_data/tinyzero_data/countdown"
+export ROLLOUT_TP_SIZE=2
+export EXPERIMENT_NAME=countdown-qwen2.5-3b
+export VLLM_ATTENTION_BACKEND=XFORMERS
+CKPT_PATH=/oss/public/user/wangziyan/ziyan_tinyZero
+PROJECT_NAME=tinyZero
+
 python3 -m verl.trainer.main_ppo \
 data.train_files=$DATA_DIR/train.parquet \
 data.val_files=$DATA_DIR/test.parquet \
@@ -6,10 +15,8 @@ data.val_batch_size=1312 \
 data.max_prompt_length=256 \
 data.max_response_length=1024 \
 actor_rollout_ref.model.path=$BASE_MODEL \
-actor_rollout_ref.model.use_remove_padding=True \
-actor_rollout_ref.actor.use_dynamic_bsz=True \
 actor_rollout_ref.actor.optim.lr=1e-6 \
-actor_rollout_ref.actor.ppo_mini_batch_size=64 \
+actor_rollout_ref.actor.ppo_mini_batch_size=128 \
 actor_rollout_ref.actor.ppo_micro_batch_size=8 \
 actor_rollout_ref.rollout.log_prob_micro_batch_size=8 \
 actor_rollout_ref.rollout.tensor_model_parallel_size=$ROLLOUT_TP_SIZE \
@@ -26,6 +33,10 @@ trainer.n_gpus_per_node=$N_GPUS \
 trainer.nnodes=1 \
 trainer.save_freq=100 \
 trainer.test_freq=100 \
-trainer.project_name=TinyZero \
+trainer.project_name=$PROJECT_NAME \
 trainer.experiment_name=$EXPERIMENT_NAME \
-trainer.total_epochs=15 2>&1 | tee verl_demo.log
+trainer.default_local_dir=$CKPT_PATH/$PROJECT_NAME/$EXPERIMENT_NAME \
++actor.use_lookahead=True \
++actor_rollout_ref.lookahead_inner_steps=3 \
++actor_rollout_ref.lookahead_step_size=0.2 \
+trainer.total_epochs=15 2>&1 | tee verl_demo.log 

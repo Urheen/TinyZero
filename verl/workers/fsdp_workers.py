@@ -356,6 +356,9 @@ class ActorRolloutRefWorker(Worker):
     def update_actor(self, data: DataProto):
         data = data.to('cuda')
 
+        with torch.no_grad():
+            slow_weights = [p.detach().clone().cpu() for p in self.actor_module_fsdp.parameters() if p.requires_grad]
+
         assert self._is_actor
         if self._is_offload_param:
             load_fsdp_param_and_grad(module=self.actor_module_fsdp,
@@ -371,8 +374,9 @@ class ActorRolloutRefWorker(Worker):
         with self.ulysses_sharding_manager:
             data = self.ulysses_sharding_manager.preprocess_data(data=data)
             # perform training
-            with Timer(name='update_policy', logger=None) as timer:
-                metrics = self.actor.update_policy(data=data)
+            for _ in range(4):
+                with Timer(name='update_policy', logger=None) as timer:
+                    metrics = self.actor.update_policy(data=data)
             delta_time = timer.last
             global_num_tokens = data.meta_info['global_token_num']
             estimated_flops, promised_flops = self.flops_counter.estimate_flops(global_num_tokens, delta_time)
@@ -395,6 +399,119 @@ class ActorRolloutRefWorker(Worker):
         if self._is_offload_optimizer:
             offload_fsdp_optimizer(optimizer=self.actor_optimizer)
         torch.cuda.empty_cache()
+
+        with torch.no_grad():
+            fast_weights = [p.detach().clone().cpu() for p in self.actor_module_fsdp.parameters() if p.requires_grad]
+        
+        with open("./check.txt", "a") as f:
+            for idx, (w_slow, w_fast) in enumerate(zip(slow_weights, fast_weights)):
+                delta = (w_fast - w_slow).abs().mean()
+                if delta.item() != 0.0:
+                    print(f"[CheckUpdate-NoFSDP] Param {idx}: = {delta.item():.6e}", file=f)
+                    print(f"{w_slow}", file=f)
+                    print(f"{w_fast}", file=f)
+                    print(self.config, file=f)
+                    print('***', file=f)
+                    print(self.role, file=f)
+        print(self.role)
+        assert False
+        return output
+
+    @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
+    def lookahead_update_actor(self, data: DataProto):
+        print(self.config, file=open('./check.txt', 'a'))
+        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, StateDictType, FullStateDictConfig
+
+        num_inner_steps = self.config.lookahead_inner_steps
+        step_size = self.config.lookahead_step_size
+        data = data.to('cuda')
+
+        assert self._is_actor
+        if self._is_offload_param:
+            load_fsdp_param_and_grad(module=self.actor_module_fsdp,
+                                     device_id=torch.cuda.current_device(),
+                                     load_grad=self._is_offload_grad)
+        if self._is_offload_optimizer:
+            load_fsdp_optimizer(optimizer=self.actor_optimizer, device_id=torch.cuda.current_device())
+
+        data.batch = data.batch.cuda()
+
+        log_gpu_memory_usage('Before update policy', logger=logger)
+
+        with torch.no_grad():
+            slow_weights = [p.detach().clone() for p in self.actor_module_fsdp.parameters() if p.requires_grad]
+
+        with self.ulysses_sharding_manager:
+            data = self.ulysses_sharding_manager.preprocess_data(data=data)
+
+            with Timer(name='update_policy', logger=None) as timer:
+                for _ in range(num_inner_steps):
+                    self.actor.update_policy(data=data)
+
+            with torch.no_grad():
+                fast_weights = [p.detach().clone() for p in self.actor_module_fsdp.parameters() if p.requires_grad]
+            # print('hay', file=open("./check.txt", "a"))
+
+            with torch.no_grad():
+                idx = 0
+                for param in self.actor_module_fsdp.parameters():
+                    if not param.requires_grad:
+                        continue
+                    param_tmp = slow_weights[idx] + step_size * (fast_weights[idx] - slow_weights[idx])
+                    param_old = param.data.clone()
+                    # print(f"{param.data.mean()}, {slow_weights[idx].mean()}, {param_tmp.mean()}, {param_old.mean()}", file=open("./check.txt", "a"))
+                    param.data.copy_(param_tmp)
+                    idx += 1
+                    # assert not param.data.equal(param_old), f"{param.data.mean()}, {slow_weights[idx].mean()}, {param_tmp.mean()}, {param_old.mean()}"
+            
+            # with torch.no_grad():
+            with Timer(name='update_policy', logger=None) as timer:
+                metrics = self.actor.update_policy(data=data)  # do not modify model
+
+            # # # Step 9: Restore grad flags for next outer PPO step
+            # # for p, flag in zip(self.actor_module_fsdp.parameters(), requires_grad_flags):
+            # #     p.requires_grad_(flag)
+
+            delta_time = timer.last
+            global_num_tokens = data.meta_info['global_token_num']
+            estimated_flops, promised_flops = self.flops_counter.estimate_flops(global_num_tokens, delta_time)
+            metrics['mfu/actor'] = estimated_flops * self.config.actor.ppo_epochs / promised_flops / self.world_size
+
+            self.actor_lr_scheduler.step()
+            lr = self.actor_lr_scheduler.get_last_lr()[0]
+            metrics['actor/lr'] = lr
+
+            log_gpu_memory_usage('After update policy', logger=logger)
+
+            # TODO: here, we should return all metrics
+            output = DataProto(meta_info={'metrics': metrics})
+
+            output = self.ulysses_sharding_manager.postprocess_data(data=output)
+            output = output.to('cpu')
+
+        if self._is_offload_param:
+            offload_fsdp_param_and_grad(module=self.actor_module_fsdp, offload_grad=self._is_offload_grad)
+        if self._is_offload_optimizer:
+            offload_fsdp_optimizer(optimizer=self.actor_optimizer)
+        torch.cuda.empty_cache()
+
+        # with torch.no_grad():
+        #     fast_weights = [p.detach().clone().cpu() for p in self.actor_module_fsdp.parameters() if p.requires_grad]
+        # flag = False
+        with open("./check.txt", "a") as f:
+            for idx, (w_slow, w_fast) in enumerate(zip(slow_weights, fast_weights)):
+                delta = (w_fast - w_slow).abs().mean()
+                if delta.item() != 0.0:
+                    print(f"[CheckUpdate-NoFSDP] Param {idx}: = {delta.item():.6e}", file=f)
+                    # print(f"{w_slow}", file=f)
+                    # print(f"{w_fast}", file=f)
+                    # print(self.role, file=f)
+                # assert False
+                # if delta.item() != 0.0:
+                #     flag = True
+        # if flag:
+        #     print(self.role)
+        #     assert False
         return output
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)

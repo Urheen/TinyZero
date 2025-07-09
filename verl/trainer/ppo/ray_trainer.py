@@ -34,6 +34,8 @@ from verl.single_controller.ray import RayResourcePool, RayWorkerGroup, RayClass
 from verl.single_controller.ray.base import create_colocated_worker_cls
 from verl.trainer.ppo import core_algos
 from verl.utils.seqlen_balancing import get_seqlen_balanced_partitions, log_seqlen_unbalance
+from verl.workers.actor.lookahead_util import lookahead_update
+
 
 WorkerType = Type[Worker]
 
@@ -266,7 +268,7 @@ def compute_timing_metrics(batch, timing_raw):
     num_tokens_of_section = {
         'gen': num_response_tokens,
         **{
-            name: num_overall_tokens for name in ['ref', 'values', 'adv', 'update_critic', 'update_actor']
+            name: num_overall_tokens for name in ['ref', 'values', 'adv', 'update_critic', 'update_actor', 'lookahead_update_actor']
         },
     }
 
@@ -489,6 +491,7 @@ class RayPPOTrainer(object):
         # See https://github.com/volcengine/verl/blob/master/examples/ray/tutorial.ipynb for more information.
         all_wg = {}
         self.wg_dicts = []
+
         for resource_pool, class_dict in self.resource_pool_to_cls.items():
             worker_dict_cls = create_colocated_worker_cls(class_dict=class_dict)
             wg_dict = self.ray_worker_group_cls(resource_pool=resource_pool, ray_cls_with_init=worker_dict_cls)
@@ -650,11 +653,15 @@ class RayPPOTrainer(object):
                         critic_output_metrics = reduce_metrics(critic_output.meta_info['metrics'])
                         metrics.update(critic_output_metrics)
 
-                    # implement critic warmup
                     if self.config.trainer.critic_warmup <= self.global_steps:
                         # update actor
-                        with _timer('update_actor', timing_raw):
-                            actor_output = self.actor_rollout_wg.update_actor(batch)
+                        if self.config.actor.use_lookahead:
+                            with _timer('update_actor', timing_raw):
+                                actor_output = self.actor_rollout_wg.lookahead_update_actor(batch)
+                        else:
+                            with _timer('update_actor', timing_raw):
+                                actor_output = self.actor_rollout_wg.update_actor(batch)
+
                         actor_output_metrics = reduce_metrics(actor_output.meta_info['metrics'])
                         metrics.update(actor_output_metrics)
 

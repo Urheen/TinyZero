@@ -34,7 +34,7 @@ from verl.single_controller.ray import RayResourcePool, RayWorkerGroup, RayClass
 from verl.single_controller.ray.base import create_colocated_worker_cls
 from verl.trainer.ppo import core_algos
 from verl.utils.seqlen_balancing import get_seqlen_balanced_partitions, log_seqlen_unbalance
-from verl.workers.actor.lookahead_util import lookahead_update
+# from verl.workers.actor.lookahead_util import lookahead_update
 
 
 WorkerType = Type[Worker]
@@ -352,6 +352,14 @@ class RayPPOTrainer(object):
                                          filter_prompts=True,
                                          return_raw_chat=self.config.data.get('return_raw_chat', False),
                                          truncation='error')
+
+        # print("**************************")
+        # print("**************************")
+        # print("**************************")
+        # print(self.train_dataset)
+        # print("**************************")
+        # print("**************************")
+        # print("**************************")
         self.train_dataloader = DataLoader(dataset=self.train_dataset,
                                            batch_size=self.config.data.train_batch_size,
                                            shuffle=True,
@@ -581,10 +589,13 @@ class RayPPOTrainer(object):
                 metrics = {}
                 timing_raw = {}
 
+                # print(batch_dict)
+
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
 
                 # pop those keys for generation
                 gen_batch = batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids'])
+
 
                 with _timer('step', timing_raw):
                     # generate a batch
@@ -663,6 +674,8 @@ class RayPPOTrainer(object):
                                 actor_output = self.actor_rollout_wg.update_actor(batch)
 
                         actor_output_metrics = reduce_metrics(actor_output.meta_info['metrics'])
+
+                        print(actor_output_metrics)
                         metrics.update(actor_output_metrics)
 
                     # validate

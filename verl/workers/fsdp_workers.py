@@ -400,21 +400,21 @@ class ActorRolloutRefWorker(Worker):
             offload_fsdp_optimizer(optimizer=self.actor_optimizer)
         torch.cuda.empty_cache()
 
-        with torch.no_grad():
-            fast_weights = [p.detach().clone().cpu() for p in self.actor_module_fsdp.parameters() if p.requires_grad]
+        # with torch.no_grad():
+        #     fast_weights = [p.detach().clone().cpu() for p in self.actor_module_fsdp.parameters() if p.requires_grad]
         
-        with open("./check.txt", "a") as f:
-            for idx, (w_slow, w_fast) in enumerate(zip(slow_weights, fast_weights)):
-                delta = (w_fast - w_slow).abs().mean()
-                if delta.item() != 0.0:
-                    print(f"[CheckUpdate-NoFSDP] Param {idx}: = {delta.item():.6e}", file=f)
-                    print(f"{w_slow}", file=f)
-                    print(f"{w_fast}", file=f)
-                    print(self.config, file=f)
-                    print('***', file=f)
-                    print(self.role, file=f)
-        print(self.role)
-        assert False
+        # with open("./check.txt", "a") as f:
+        #     for idx, (w_slow, w_fast) in enumerate(zip(slow_weights, fast_weights)):
+        #         delta = (w_fast - w_slow).abs().mean()
+        #         if delta.item() != 0.0:
+        #             print(f"[CheckUpdate-NoFSDP] Param {idx}: = {delta.item():.6e}", file=f)
+        #             print(f"{w_slow}", file=f)
+        #             print(f"{w_fast}", file=f)
+        #             print(self.config, file=f)
+        #             print('***', file=f)
+        #             print(self.role, file=f)
+        # print(self.role)
+        # assert False
         return output
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)

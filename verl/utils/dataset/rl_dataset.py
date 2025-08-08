@@ -85,6 +85,8 @@ class RLHFDataset(Dataset):
         self.chat_template_func = chat_template_func
         self.truncation = truncation
 
+        print("Prompt_key", self.prompt_key)
+
         self._download()
         self._read_files_and_tokenize()
 
@@ -122,8 +124,15 @@ class RLHFDataset(Dataset):
         Note that we also return the raw_input_ids so that it can be combined with other chat template
         """
         row_dict = self.dataframe.iloc[item].to_dict()
+        
+        print("*******************************")
+        print(row_dict)
 
         chat = row_dict.pop(self.prompt_key)
+
+        print(self.prompt_key)
+        print(chat)
+        print("*******************************")
 
         prompt_with_chat_template = chat[0]['content']
         # prompt_with_chat_template = chat

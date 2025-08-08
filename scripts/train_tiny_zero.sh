@@ -5,7 +5,7 @@ export ROLLOUT_TP_SIZE=2
 export EXPERIMENT_NAME=countdown-qwen2.5-3b
 export VLLM_ATTENTION_BACKEND=XFORMERS
 CKPT_PATH=/oss/public/user/wangziyan/ziyan_tinyZero
-PROJECT_NAME=tinyZero
+PROJECT_NAME=lookahead_tinyzero
 
 python3 -m verl.trainer.main_ppo \
 data.train_files=$DATA_DIR/train.parquet \

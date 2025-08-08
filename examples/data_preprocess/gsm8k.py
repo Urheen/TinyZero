@@ -15,6 +15,16 @@
 Preprocess the GSM8k dataset to parquet format
 """
 
+import sys
+import os
+# 获取当前文件所在目录（AA/）
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# 计算项目根目录的路径（假设AA的父目录是A，A的父目录是根目录）
+root_dir = os.path.abspath(os.path.join(current_dir, '../../'))
+# 将根目录添加到sys.path
+if root_dir not in sys.path:
+    sys.path.insert(0, root_dir)
+
 import re
 import os
 import datasets
